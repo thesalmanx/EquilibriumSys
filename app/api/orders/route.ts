@@ -9,8 +9,8 @@ export async function GET(req: Request) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     const search = searchParams.get('search');
-    const limit = parseInt(searchParams.get('limit') || '100');
-    const offset = parseInt(searchParams.get('offset') || '0');
+    const limit = parseInt(searchParams.get('limit') || '100', 10);
+    const offset = parseInt(searchParams.get('offset') || '0', 10);
 
     const filters: any = {};
     if (status) filters.status = status;
@@ -61,7 +61,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ orders, total, limit, offset });
   } catch (error) {
-    console.error('[ORDER GET] Error:', error);
+    console.error('[ORDER GET] Error fetching orders:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -69,38 +69,76 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const data = await req.json();
+    console.log('[ORDER POST] Incoming order data:', data);
 
-    if (!data.customerId || !data.items?.length) {
-      return NextResponse.json({ error: 'Customer and at least one item required' }, { status: 400 });
+    if (!data.customerId || !data.items || !data.items.length) {
+      return NextResponse.json(
+        { error: 'Customer and at least one item are required' },
+        { status: 400 }
+      );
     }
 
-    const customer = await db.customer.findUnique({ where: { id: data.customerId } });
-    if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    const customer = await db.customer.findUnique({
+      where: { id: data.customerId },
+    });
+    if (!customer) {
+      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    }
 
     let subtotal = 0;
-    const itemsToCreate = [];
-    const inventoryUpdates = [];
-    const inventoryHistoryEntries = [];
-    const lowStockItems: any[] = [];
+    const itemsToCreate: { productId: string; quantity: number; price: number }[] = [];
+    const inventoryUpdates: { id: string; newQty: number }[] = [];
+    const inventoryHistoryEntries: {
+      itemId: string;
+      action: 'REMOVE';
+      quantity: number;
+      notes: string;
+      // Optionally include userId if you pass it in the request:
+      // userId?: string;
+    }[] = [];
+    const lowStockItems: {
+      id: string;
+      name: string;
+      sku: string;
+      quantity: number;
+      reorderLevel: number;
+    }[] = [];
 
     for (const item of data.items) {
-      const product = await db.inventoryItem.findUnique({ where: { id: item.productId } });
-      if (!product) return NextResponse.json({ error: `Product ${item.productId} not found` }, { status: 404 });
+      const product = await db.inventoryItem.findUnique({
+        where: { id: item.productId },
+      });
+      if (!product) {
+        return NextResponse.json(
+          { error: `Product ${item.productId} not found` },
+          { status: 404 }
+        );
+      }
       if (product.quantity < item.quantity) {
-        return NextResponse.json({ error: `Insufficient stock for ${product.name}` }, { status: 400 });
+        return NextResponse.json(
+          { error: `Not enough stock for ${product.name}` },
+          { status: 400 }
+        );
       }
 
-      const price = item.price || product.price;
+      const price = item.price ?? product.price;
       subtotal += price * item.quantity;
 
-      itemsToCreate.push({ productId: item.productId, quantity: item.quantity, price });
-      inventoryUpdates.push({ id: product.id, newQty: product.quantity - item.quantity });
+      itemsToCreate.push({
+        productId: item.productId,
+        quantity: item.quantity,
+        price,
+      });
+      inventoryUpdates.push({
+        id: product.id,
+        newQty: product.quantity - item.quantity,
+      });
       inventoryHistoryEntries.push({
         itemId: product.id,
         action: 'REMOVE',
         quantity: item.quantity,
         notes: 'Removed for order',
-        userId: null,
+        // userId: data.userId, // uncomment if you include a userId in the request
       });
 
       if (product.quantity - item.quantity <= product.reorderLevel) {
@@ -115,22 +153,23 @@ export async function POST(req: Request) {
     }
 
     const discount = data.discount || 0;
-    const tax = data.tax || 0;
-    const total = Math.max(0, subtotal - discount + tax);
-    const orderNumber = `ORD-${String(await db.order.count() + 1).padStart(5, '0')}`;
+    const total = Math.max(0, subtotal - discount);
+    const orderCount = await db.order.count();
+    const orderNumber = `ORD-${String(orderCount + 1).padStart(5, '0')}`;
 
-    const order = await db.$transaction(async (tx) => {
-      const newOrder = await tx.order.create({
+    const order = await db.$transaction(async (prisma) => {
+      const newOrder = await prisma.order.create({
         data: {
           orderNumber,
           customerId: data.customerId,
           subtotal,
           discount,
-          tax,
+          tax: data.tax || 0,
           total,
           status: 'PENDING',
           notes: data.notes || '',
-          createdById: null,
+          // If you want to track who created the order, add:
+          // createdById: data.createdById,
           payment: {
             create: {
               method: data.paymentMethod || 'CREDIT_CARD',
@@ -148,22 +187,22 @@ export async function POST(req: Request) {
       });
 
       for (const update of inventoryUpdates) {
-        await tx.inventoryItem.update({
+        await prisma.inventoryItem.update({
           where: { id: update.id },
           data: { quantity: update.newQty },
         });
       }
 
       for (const entry of inventoryHistoryEntries) {
-        await tx.inventoryHistory.create({ data: entry });
+        await prisma.inventoryHistory.create({ data: entry });
       }
 
-      await tx.orderStatusLog.create({
+      await prisma.orderStatusLog.create({
         data: {
           orderId: newOrder.id,
           status: 'PENDING',
           notes: 'Order created',
-          userId: null,
+          // userId: data.userId, // uncomment if tracking user actions
         },
       });
 
@@ -176,18 +215,26 @@ export async function POST(req: Request) {
           type: 'LOW_STOCK',
           title: `Low Stock: ${item.name}`,
           message: `${item.name} is below reorder level.`,
-          userId: null,
-          metadata: item,
+          // userId: data.userId, // optional, if provided
+          metadata: {
+            itemId: item.id,
+            sku: item.sku,
+            quantity: item.quantity,
+            reorderLevel: item.reorderLevel,
+          },
         },
       });
     }
 
     return NextResponse.json(order);
   } catch (error) {
-    console.error('[ORDER POST] Fatal error:', error);
-    return NextResponse.json({
-      error: 'Internal Server Error',
-      details: error instanceof Error ? error.message : 'Unknown',
-    }, { status: 500 });
+    console.error('[ORDER POST] Error creating order:', error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : 'Internal Server Error',
+        details: JSON.stringify(error),
+      },
+      { status: 500 }
+    );
   }
 }
