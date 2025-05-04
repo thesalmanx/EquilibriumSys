@@ -1,26 +1,75 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
-const isDev = process.env.NODE_ENV !== 'production';
-
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    // … your existing GET logic unchanged …
-    // (omitted here for brevity)
+    const status = searchParams.get('status');
+    const customerId = searchParams.get('customerId');
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+    const search = searchParams.get('search');
+    const limit = parseInt(searchParams.get('limit') || '100', 10);
+    const offset = parseInt(searchParams.get('offset') || '0', 10);
+
+    const filters: any = {};
+    if (status) filters.status = status;
+    if (customerId) filters.customerId = customerId;
+
+    if (startDate || endDate) {
+      filters.createdAt = {};
+      if (startDate) filters.createdAt.gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setDate(end.getDate() + 1);
+        filters.createdAt.lt = end;
+      }
+    }
+
+    if (search) {
+      filters.OR = [
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { customer: { name: { contains: search, mode: 'insensitive' } } },
+        { customer: { email: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [orders, total] = await Promise.all([
+      db.order.findMany({
+        where: filters,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+        include: {
+          customer: {
+            select: { id: true, name: true, email: true },
+          },
+          items: {
+            select: {
+              id: true,
+              quantity: true,
+              price: true,
+              product: {
+                select: { id: true, name: true, sku: true },
+              },
+            },
+          },
+        },
+      }),
+      db.order.count({ where: filters }),
+    ]);
+
     return NextResponse.json({ orders, total, limit, offset });
   } catch (error) {
     console.error('[ORDER GET] Error fetching orders:', error);
-    return NextResponse.json(
-      { error: 'Internal Server Error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
 
 export async function POST(req: Request) {
   let data: any;
-  // 1️⃣ Parse & log the incoming payload
+
+  // Parse & log payload
   try {
     data = await req.json();
     console.log('[ORDER POST] Payload:', JSON.stringify(data, null, 2));
@@ -33,7 +82,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    // 2️⃣ Basic validation
+    // Basic validation
     if (!data.customerId || !Array.isArray(data.items) || data.items.length === 0) {
       return NextResponse.json(
         { error: 'Customer and at least one item are required' },
@@ -41,13 +90,13 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3️⃣ Check customer exists
+    // Check customer exists
     const customer = await db.customer.findUnique({ where: { id: data.customerId } });
     if (!customer) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
 
-    // 4️⃣ Build order details
+    // Build order details
     let subtotal = 0;
     const itemsToCreate: { productId: string; quantity: number; price: number }[] = [];
     const inventoryUpdates: { id: string; newQty: number }[] = [];
@@ -74,12 +123,14 @@ export async function POST(req: Request) {
 
       itemsToCreate.push({ productId: item.productId, quantity: item.quantity, price });
       inventoryUpdates.push({ id: product.id, newQty: product.quantity - item.quantity });
+
       inventoryHistoryEntries.push({
-        itemId: product.id,
+        item: { connect: { id: product.id } },
         action: 'REMOVE',
         quantity: item.quantity,
         notes: 'Removed for order',
-        // userId: data.userId, // if you’re passing the user in the payload
+        // if you have a user relation on InventoryHistory, uncomment:
+        // user: { connect: { id: data.userId } },
       });
 
       if (product.quantity - item.quantity <= product.reorderLevel) {
@@ -98,7 +149,7 @@ export async function POST(req: Request) {
     const orderCount = await db.order.count();
     const orderNumber = `ORD-${String(orderCount + 1).padStart(5, '0')}`;
 
-    // 5️⃣ Transaction: create order, update inventory, history, status log
+    // Transaction: create order, update inventory, history, status log
     const newOrder = await db.$transaction(async (prisma) => {
       const created = await prisma.order.create({
         data: {
@@ -126,34 +177,40 @@ export async function POST(req: Request) {
         },
       });
 
+      // apply inventory updates
       for (const u of inventoryUpdates) {
         await prisma.inventoryItem.update({
           where: { id: u.id },
           data: { quantity: u.newQty },
         });
       }
+
+      // create history entries with nested connect
       for (const h of inventoryHistoryEntries) {
         await prisma.inventoryHistory.create({ data: h });
       }
+
+      // log order status
       await prisma.orderStatusLog.create({
         data: {
           orderId: created.id,
           status: 'PENDING',
           notes: 'Order created',
-          // userId: data.userId,
+          // user: { connect: { id: data.userId } },
         },
       });
+
       return created;
     });
 
-    // 6️⃣ Outside transaction: low-stock notifications
+    // Outside transaction: low-stock notifications
     for (const item of lowStockItems) {
       await db.notification.create({
         data: {
           type: 'LOW_STOCK',
           title: `Low Stock: ${item.name}`,
           message: `${item.name} is below reorder level.`,
-          // userId: data.userId,
+          // user: { connect: { id: data.userId } },
           metadata: {
             itemId: item.id,
             sku: item.sku,
@@ -166,12 +223,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json(newOrder);
   } catch (error) {
-    // 7️⃣ Enhanced error logging
     console.error('[ORDER POST] Error creating order:', error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : 'Internal Server Error',
-        ...(isDev && error instanceof Error ? { stack: error.stack } : {}),
       },
       { status: 500 }
     );
