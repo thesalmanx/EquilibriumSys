@@ -1,13 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { db } from '@/lib/db';
 
 export async function GET(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status');
     const customerId = searchParams.get('customerId');
@@ -73,13 +68,6 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    if (session.user.role !== 'ADMIN' && session.user.role !== 'STAFF') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     const data = await req.json();
     console.log('[ORDER POST] Incoming order data:', data);
 
@@ -113,10 +101,9 @@ export async function POST(req: Request) {
         action: 'REMOVE',
         quantity: item.quantity,
         notes: 'Removed for order',
-        userId: session.user.id,
+        userId: null, // No session available
       });
 
-      // Prepare for later notification check
       if (product.quantity - item.quantity <= product.reorderLevel) {
         lowStockItems.push({
           id: product.id,
@@ -144,7 +131,7 @@ export async function POST(req: Request) {
           total,
           status: 'PENDING',
           notes: data.notes || '',
-          createdById: session.user.id,
+          createdById: null,
           payment: {
             create: {
               method: data.paymentMethod || 'CREDIT_CARD',
@@ -177,21 +164,20 @@ export async function POST(req: Request) {
           orderId: newOrder.id,
           status: 'PENDING',
           notes: 'Order created',
-          userId: session.user.id,
+          userId: null,
         },
       });
 
       return newOrder;
     });
 
-    // 🔄 Now process low-stock notifications OUTSIDE the transaction
     for (const item of lowStockItems) {
       await db.notification.create({
         data: {
           type: 'LOW_STOCK',
           title: `Low Stock: ${item.name}`,
           message: `${item.name} is below reorder level.`,
-          userId: session.user.id,
+          userId: null,
           metadata: {
             itemId: item.id,
             sku: item.sku,
@@ -205,10 +191,12 @@ export async function POST(req: Request) {
     return NextResponse.json(order);
   } catch (error) {
     console.error('[ORDER POST] Error creating order:', error);
-    return NextResponse.json({
-      error: error instanceof Error ? error.message : 'Internal Server Error',
-      details: JSON.stringify(error),
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : 'Internal Server Error',
+        details: JSON.stringify(error),
+      },
+      { status: 500 }
+    );
   }
 }
-
