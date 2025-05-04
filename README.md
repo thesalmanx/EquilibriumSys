@@ -19,28 +19,6 @@
 
 ---
 
-## 🏗️ System Architecture
-
-Frontend (Next.js App Router)
-│
-├── /app → Pages + layouts (app router)
-├── /components → Reusable UI components
-├── /lib → Business logic, services (auth, db, mail, etc.)
-├── /prisma → Schema + migrations
-├── /public → Static assets
-├── /styles → Global styles
-│
-Backend (API Routes)
-├── /api/auth → Auth logic via NextAuth
-├── /api/inventory → CRUD inventory management
-├── /api/orders → Order processing & receipts
-├── /api/reports → Sales, inventory reporting
-├── /api/notifications → Alerts & notifications
-
-
-
----
-
 ## 🧩 Database Design
 
 ### 📊 Entity Relationship Diagram (ERD)
