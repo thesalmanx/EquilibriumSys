@@ -1,11 +1,10 @@
-import { NextAuthOptions } from 'next-auth';
-import NextAuth from 'next-auth/next';
+import NextAuth from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { db } from '@/lib/db';
 import { compare } from 'bcrypt';
 
-export const authOptions: NextAuthOptions = {
+const handler = NextAuth({
   adapter: PrismaAdapter(db),
   secret: process.env.NEXTAUTH_SECRET,
   session: {
@@ -31,16 +30,11 @@ export const authOptions: NextAuthOptions = {
           where: { email: credentials.email },
         });
 
-        console.log('[AUTH] User found:', !!user);
-
         if (!user) {
           throw new Error('User not found');
         }
 
         const isValid = await compare(credentials.password, user.password);
-
-        console.log('[AUTH] Password valid:', isValid);
-
         if (!isValid) {
           throw new Error('Invalid password');
         }
@@ -58,23 +52,22 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.name = user.name;
         token.email = user.email;
+        token.name = user.name;
         token.role = user.role;
       }
       return token;
     },
     async session({ session, token }) {
-      if (token && session.user) {
+      if (session.user && token) {
         session.user.id = token.id;
-        session.user.name = token.name;
         session.user.email = token.email;
+        session.user.name = token.name;
         session.user.role = token.role;
       }
       return session;
     },
   },
-};
+});
 
-const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };
