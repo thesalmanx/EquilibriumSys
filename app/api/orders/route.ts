@@ -61,7 +61,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ orders, total, limit, offset });
   } catch (error) {
-    console.error('[ORDER GET] Error fetching orders:', error);
+    console.error('[ORDER GET] Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -69,10 +69,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const data = await req.json();
-    console.log('[ORDER POST] Incoming order data:', data);
 
-    if (!data.customerId || !data.items || !data.items.length) {
-      return NextResponse.json({ error: 'Customer and at least one item are required' }, { status: 400 });
+    if (!data.customerId || !data.items?.length) {
+      return NextResponse.json({ error: 'Customer and at least one item required' }, { status: 400 });
     }
 
     const customer = await db.customer.findUnique({ where: { id: data.customerId } });
@@ -82,13 +81,13 @@ export async function POST(req: Request) {
     const itemsToCreate = [];
     const inventoryUpdates = [];
     const inventoryHistoryEntries = [];
-    const lowStockItems: { id: string; name: string; sku: string; quantity: number; reorderLevel: number }[] = [];
+    const lowStockItems: any[] = [];
 
     for (const item of data.items) {
       const product = await db.inventoryItem.findUnique({ where: { id: item.productId } });
       if (!product) return NextResponse.json({ error: `Product ${item.productId} not found` }, { status: 404 });
       if (product.quantity < item.quantity) {
-        return NextResponse.json({ error: `Not enough stock for ${product.name}` }, { status: 400 });
+        return NextResponse.json({ error: `Insufficient stock for ${product.name}` }, { status: 400 });
       }
 
       const price = item.price || product.price;
@@ -101,7 +100,7 @@ export async function POST(req: Request) {
         action: 'REMOVE',
         quantity: item.quantity,
         notes: 'Removed for order',
-        userId: null, // No session available
+        userId: null,
       });
 
       if (product.quantity - item.quantity <= product.reorderLevel) {
@@ -116,18 +115,18 @@ export async function POST(req: Request) {
     }
 
     const discount = data.discount || 0;
-    const total = Math.max(0, subtotal - discount);
-    const orderCount = await db.order.count();
-    const orderNumber = `ORD-${String(orderCount + 1).padStart(5, '0')}`;
+    const tax = data.tax || 0;
+    const total = Math.max(0, subtotal - discount + tax);
+    const orderNumber = `ORD-${String(await db.order.count() + 1).padStart(5, '0')}`;
 
-    const order = await db.$transaction(async (prisma) => {
-      const newOrder = await prisma.order.create({
+    const order = await db.$transaction(async (tx) => {
+      const newOrder = await tx.order.create({
         data: {
           orderNumber,
           customerId: data.customerId,
           subtotal,
           discount,
-          tax: data.tax || 0,
+          tax,
           total,
           status: 'PENDING',
           notes: data.notes || '',
@@ -149,17 +148,17 @@ export async function POST(req: Request) {
       });
 
       for (const update of inventoryUpdates) {
-        await prisma.inventoryItem.update({
+        await tx.inventoryItem.update({
           where: { id: update.id },
           data: { quantity: update.newQty },
         });
       }
 
       for (const entry of inventoryHistoryEntries) {
-        await prisma.inventoryHistory.create({ data: entry });
+        await tx.inventoryHistory.create({ data: entry });
       }
 
-      await prisma.orderStatusLog.create({
+      await tx.orderStatusLog.create({
         data: {
           orderId: newOrder.id,
           status: 'PENDING',
@@ -178,25 +177,17 @@ export async function POST(req: Request) {
           title: `Low Stock: ${item.name}`,
           message: `${item.name} is below reorder level.`,
           userId: null,
-          metadata: {
-            itemId: item.id,
-            sku: item.sku,
-            quantity: item.quantity,
-            reorderLevel: item.reorderLevel,
-          },
+          metadata: item,
         },
       });
     }
 
     return NextResponse.json(order);
   } catch (error) {
-    console.error('[ORDER POST] Error creating order:', error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : 'Internal Server Error',
-        details: JSON.stringify(error),
-      },
-      { status: 500 }
-    );
+    console.error('[ORDER POST] Fatal error:', error);
+    return NextResponse.json({
+      error: 'Internal Server Error',
+      details: error instanceof Error ? error.message : 'Unknown',
+    }, { status: 500 });
   }
 }
