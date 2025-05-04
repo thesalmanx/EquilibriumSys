@@ -5,7 +5,7 @@ const BASE = process.env.NEXT_PUBLIC_API_BASE ?? ''; // "" for same-origin dev
 class InventoryService {
   private async request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
     const res = await fetch(input, {
-      credentials: 'include', // send session cookie
+      credentials: 'include', // 👈 Ensures session cookie is sent
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -14,7 +14,6 @@ class InventoryService {
     });
 
     if (!res.ok) {
-      // attempt to surface server message without crashing on non‑JSON
       const body = await res.text();
       throw new Error(
         `(${res.status}) ${body || res.statusText || 'Request failed'}`

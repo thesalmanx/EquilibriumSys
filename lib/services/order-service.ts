@@ -23,34 +23,38 @@ class OrderService {
     const url = `/api/orders?${queryParams.toString()}`;
     
     try {
-      const response = await fetch(url);
-      
+      const response = await fetch(url, {
+        credentials: 'include', // Important for session
+      });
+
       if (!response.ok) {
         throw new Error('Failed to fetch orders');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error('Error fetching orders:', error);
       throw error;
     }
   }
-  
+
   async getById(id: string) {
     try {
-      const response = await fetch(`/api/orders/${id}`);
-      
+      const response = await fetch(`/api/orders/${id}`, {
+        credentials: 'include',
+      });
+
       if (!response.ok) {
         throw new Error('Failed to fetch order');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error('Error fetching order:', error);
       throw error;
     }
   }
-  
+
   async create(data: {
     customerId: string;
     items: Array<{
@@ -69,21 +73,22 @@ class OrderService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify(data),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to create order');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error('Error creating order:', error);
       throw error;
     }
   }
-  
+
   async updateStatus(id: string, status: OrderStatus, notes?: string) {
     try {
       const response = await fetch(`/api/orders/${id}`, {
@@ -91,40 +96,42 @@ class OrderService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           status,
           notes,
         }),
       });
-      
+
       if (!response.ok) {
         throw new Error('Failed to update order status');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error('Error updating order status:', error);
       throw error;
     }
   }
-  
+
   async delete(id: string) {
     try {
       const response = await fetch(`/api/orders/${id}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
-      
+
       if (!response.ok) {
         throw new Error('Failed to delete order');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error('Error deleting order:', error);
       throw error;
     }
   }
-  
+
   async sendReceipt(id: string) {
     try {
       const response = await fetch(`/api/orders/${id}`, {
@@ -132,15 +139,16 @@ class OrderService {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'sendReceipt',
         }),
       });
-      
+
       if (!response.ok) {
         throw new Error('Failed to send receipt');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error('Error sending receipt:', error);

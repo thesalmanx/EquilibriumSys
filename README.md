@@ -1,7 +1,6 @@
-# EquilibriumSys
-## Project is live at [equilibriumsys.salmann.dev](https://equilibriumsys.salmann.dev)
+# 📊 EquilibriumSys – Inventory Management System for Small Businesses
 
-# 🚀 EquilibriumSys – Inventory Management System for Small Businesses
+## Project is live at [equilibriumsys.salmann.dev](https://equilibriumsys.salmann.dev)
 
 **EquilibriumSys** is a real-time inventory and order management system built with **Next.js** and **PostgreSQL**. Designed for small to mid-sized businesses, it provides powerful features including automated low-stock alerts, detailed sales/inventory reporting, and secure role-based access.
 
