@@ -1,0 +1,252 @@
+//---------------------------------------------------------------------
+//  Prisma schema – inventory / order management
+//---------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------- 1. Shared ENUMS ---------------------------
+
+// Uses the existing Postgres enum type "user_role"
+enum UserRole {
+  ADMIN
+  STAFF
+  VIEWER
+
+  @@map("user_role") // prevents “type already exists” error
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  CASH
+  BANK_TRANSFER
+  CHECK
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  CANCELLED
+}
+
+// -------------------- 2. Authentication & Users -----------------------
+
+model User {
+  id        String    @id @default(uuid())
+  name      String?
+  email     String    @unique
+  password  String
+  role      UserRole  @default(STAFF)
+  lastLogin DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  createdItems  InventoryItem[]    @relation("CreatedBy")
+  orders        Order[]            @relation("CreatedBy")
+  statusLogs    OrderStatusLog[]
+  inventoryLogs InventoryHistory[]
+  notifications Notification[]
+}
+
+// ------------------- Next‑Auth tables ----------------------------------
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------------------------- 3. Inventory -----------------------------
+
+model InventoryItem {
+  id           String   @id @default(uuid())
+  name         String
+  sku          String   @unique
+  description  String?
+  category     String?
+  quantity     Int      @default(0)
+  reorderLevel Int      @default(5)
+  cost         Float    @default(0)
+  price        Float    @default(0)
+  location     String?
+  unit         String   @default("each")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // created‑by relation
+  createdById String?
+  createdBy   User?   @relation("CreatedBy", fields: [createdById], references: [id])
+
+  // Relations
+  history    InventoryHistory[]
+  orderItems OrderItem[]
+}
+
+model InventoryHistory {
+  id        String        @id @default(uuid())
+  itemId    String
+  item      InventoryItem @relation(fields: [itemId], references: [id])
+  action    String // ADD, REMOVE, CREATE, UPDATE
+  quantity  Int
+  notes     String?
+  userId    String
+  user      User          @relation(fields: [userId], references: [id])
+  createdAt DateTime      @default(now())
+}
+
+// ----------------------- 4. Orders & Customers ------------------------
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  phone     String?
+  address   Address?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[]
+}
+
+model Address {
+  id         String @id @default(uuid())
+  customerId String @unique
+  street     String
+  city       String
+  state      String
+  zipCode    String
+  country    String @default("US")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  orderNumber String      @unique
+  customerId  String
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  subtotal    Float
+  tax         Float       @default(0)
+  discount    Float       @default(0)
+  total       Float
+  status      OrderStatus @default(PENDING)
+  notes       String?
+
+  // relations
+  items         OrderItem[]
+  statusHistory OrderStatusLog[]
+  payment       Payment?
+
+  // created‑by relation
+  createdById String?
+  createdBy   User?   @relation("CreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrderItem {
+  id        String @id @default(uuid())
+  orderId   String
+  productId String
+  quantity  Int
+  price     Float
+
+  order   Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product InventoryItem @relation(fields: [productId], references: [id])
+}
+
+// --------------- Status history – avoids enum clash -------------------
+
+model OrderStatusLog {
+  id        String      @id @default(uuid())
+  orderId   String
+  status    OrderStatus
+  notes     String?
+  userId    String
+  createdAt DateTime    @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+}
+
+// ----------------------------- 5. Payments -----------------------------
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String        @unique
+  method        PaymentMethod @default(CREDIT_CARD)
+  status        PaymentStatus @default(PENDING)
+  amount        Float
+  transactionId String?
+  date          DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+// --------------------------- 6. Notifications --------------------------
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String // LOW_STOCK, ORDER, SYSTEM
+  title     String
+  message   String
+  read      Boolean   @default(false)
+  readAt    DateTime?
+  metadata  Json      @default("{}")
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

@@ -1,0 +1,214 @@
+import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { db } from '@/lib/db';
+
+export async function GET(req: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const { searchParams } = new URL(req.url);
+    const status = searchParams.get('status');
+    const customerId = searchParams.get('customerId');
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+    const search = searchParams.get('search');
+    const limit = parseInt(searchParams.get('limit') || '100');
+    const offset = parseInt(searchParams.get('offset') || '0');
+
+    const filters: any = {};
+    if (status) filters.status = status;
+    if (customerId) filters.customerId = customerId;
+
+    if (startDate || endDate) {
+      filters.createdAt = {};
+      if (startDate) filters.createdAt.gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setDate(end.getDate() + 1);
+        filters.createdAt.lt = end;
+      }
+    }
+
+    if (search) {
+      filters.OR = [
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { customer: { name: { contains: search, mode: 'insensitive' } } },
+        { customer: { email: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [orders, total] = await Promise.all([
+      db.order.findMany({
+        where: filters,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+        include: {
+          customer: {
+            select: { id: true, name: true, email: true },
+          },
+          items: {
+            select: {
+              id: true,
+              quantity: true,
+              price: true,
+              product: {
+                select: { id: true, name: true, sku: true },
+              },
+            },
+          },
+        },
+      }),
+      db.order.count({ where: filters }),
+    ]);
+
+    return NextResponse.json({ orders, total, limit, offset });
+  } catch (error) {
+    console.error('[ORDER GET] Error fetching orders:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    if (session.user.role !== 'ADMIN' && session.user.role !== 'STAFF') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const data = await req.json();
+    console.log('[ORDER POST] Incoming order data:', data);
+
+    if (!data.customerId || !data.items || !data.items.length) {
+      return NextResponse.json({ error: 'Customer and at least one item are required' }, { status: 400 });
+    }
+
+    const customer = await db.customer.findUnique({ where: { id: data.customerId } });
+    if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+
+    let subtotal = 0;
+    const itemsToCreate = [];
+    const inventoryUpdates = [];
+    const inventoryHistoryEntries = [];
+    const lowStockItems: { id: string; name: string; sku: string; quantity: number; reorderLevel: number }[] = [];
+
+    for (const item of data.items) {
+      const product = await db.inventoryItem.findUnique({ where: { id: item.productId } });
+      if (!product) return NextResponse.json({ error: `Product ${item.productId} not found` }, { status: 404 });
+      if (product.quantity < item.quantity) {
+        return NextResponse.json({ error: `Not enough stock for ${product.name}` }, { status: 400 });
+      }
+
+      const price = item.price || product.price;
+      subtotal += price * item.quantity;
+
+      itemsToCreate.push({ productId: item.productId, quantity: item.quantity, price });
+      inventoryUpdates.push({ id: product.id, newQty: product.quantity - item.quantity });
+      inventoryHistoryEntries.push({
+        itemId: product.id,
+        action: 'REMOVE',
+        quantity: item.quantity,
+        notes: 'Removed for order',
+        userId: session.user.id,
+      });
+
+      // Prepare for later notification check
+      if (product.quantity - item.quantity <= product.reorderLevel) {
+        lowStockItems.push({
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          quantity: product.quantity - item.quantity,
+          reorderLevel: product.reorderLevel,
+        });
+      }
+    }
+
+    const discount = data.discount || 0;
+    const total = Math.max(0, subtotal - discount);
+    const orderCount = await db.order.count();
+    const orderNumber = `ORD-${String(orderCount + 1).padStart(5, '0')}`;
+
+    const order = await db.$transaction(async (prisma) => {
+      const newOrder = await prisma.order.create({
+        data: {
+          orderNumber,
+          customerId: data.customerId,
+          subtotal,
+          discount,
+          tax: data.tax || 0,
+          total,
+          status: 'PENDING',
+          notes: data.notes || '',
+          createdById: session.user.id,
+          payment: {
+            create: {
+              method: data.paymentMethod || 'CREDIT_CARD',
+              status: 'PENDING',
+              amount: total,
+            },
+          },
+          items: { create: itemsToCreate },
+        },
+        include: {
+          customer: true,
+          items: { include: { product: true } },
+          payment: true,
+        },
+      });
+
+      for (const update of inventoryUpdates) {
+        await prisma.inventoryItem.update({
+          where: { id: update.id },
+          data: { quantity: update.newQty },
+        });
+      }
+
+      for (const entry of inventoryHistoryEntries) {
+        await prisma.inventoryHistory.create({ data: entry });
+      }
+
+      await prisma.orderStatusLog.create({
+        data: {
+          orderId: newOrder.id,
+          status: 'PENDING',
+          notes: 'Order created',
+          userId: session.user.id,
+        },
+      });
+
+      return newOrder;
+    });
+
+    // 🔄 Now process low-stock notifications OUTSIDE the transaction
+    for (const item of lowStockItems) {
+      await db.notification.create({
+        data: {
+          type: 'LOW_STOCK',
+          title: `Low Stock: ${item.name}`,
+          message: `${item.name} is below reorder level.`,
+          userId: session.user.id,
+          metadata: {
+            itemId: item.id,
+            sku: item.sku,
+            quantity: item.quantity,
+            reorderLevel: item.reorderLevel,
+          },
+        },
+      });
+    }
+
+    return NextResponse.json(order);
+  } catch (error) {
+    console.error('[ORDER POST] Error creating order:', error);
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : 'Internal Server Error',
+      details: JSON.stringify(error),
+    }, { status: 500 });
+  }
+}
+
