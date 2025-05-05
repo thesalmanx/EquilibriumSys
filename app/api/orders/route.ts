@@ -4,6 +4,9 @@ export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
 import { db }                      from '@/lib/db';
 
+// Hard-coded “authenticated” admin user ID:
+const ADMIN_USER_ID = '6c429b14-3bf3-4371-b32d-006c26897189';
+
 export async function GET(request: NextRequest) {
   try {
     const params     = request.nextUrl.searchParams;
@@ -15,9 +18,11 @@ export async function GET(request: NextRequest) {
     const limit      = parseInt(params.get('limit')  || '100', 10);
     const offset     = parseInt(params.get('offset') || '0',   10);
 
+    // Build Prisma “where” filter
     const where: any = {};
     if (status)     where.status     = status;
     if (customerId) where.customerId = customerId;
+
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) where.createdAt.gte = new Date(startDate);
@@ -27,6 +32,7 @@ export async function GET(request: NextRequest) {
         where.createdAt.lt = d;
       }
     }
+
     if (search) {
       where.OR = [
         { orderNumber: { contains: search, mode: 'insensitive' } },
@@ -35,6 +41,7 @@ export async function GET(request: NextRequest) {
       ];
     }
 
+    // Fetch orders + total count
     const [orders, total] = await Promise.all([
       db.order.findMany({
         where,
@@ -57,24 +64,17 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({ orders, total, limit, offset });
-  } catch (error) {
-    console.error('GET /api/orders error:', error);
+  } catch (err) {
+    console.error('GET /api/orders error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    // ─── fetch a real ADMIN user ───────────────────────────────────────────────
-    const admin = await db.user.findFirst({ where: { role: 'ADMIN' } });
-    if (!admin) {
-      console.error('✖ No ADMIN user found in DB!');
-      return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 });
-    }
-    const userId = admin.id;
-
-    // ─── parse + validate body ────────────────────────────────────────────────
     const data = await request.json();
+
+    // Validate required fields
     if (!data.customerId || !Array.isArray(data.items) || data.items.length === 0) {
       return NextResponse.json(
         { error: 'Customer and at least one item are required' },
@@ -82,12 +82,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const customer = await db.customer.findUnique({ where: { id: data.customerId } });
+    // Ensure customer exists
+    const customer = await db.customer.findUnique({
+      where: { id: data.customerId },
+    });
     if (!customer) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
 
-    // ─── validate line-items & build lists ────────────────────────────────────
+    // Validate items & prepare updates
     let subtotal = 0;
     const itemsToCreate: { productId: string; quantity: number; price: number }[] = [];
     const inventoryUpdates: { id: string; quantity: number }[]               = [];
@@ -97,7 +100,7 @@ export async function POST(request: NextRequest) {
       quantity: number;
       notes: string;
       userId: string;
-    }[] = [];
+    }[]                                                                       = [];
 
     for (const itm of data.items) {
       if (!itm.productId || itm.quantity <= 0) {
@@ -106,7 +109,10 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      const product = await db.inventoryItem.findUnique({ where: { id: itm.productId } });
+
+      const product = await db.inventoryItem.findUnique({
+        where: { id: itm.productId },
+      });
       if (!product) {
         return NextResponse.json(
           { error: `Product ${itm.productId} not found` },
@@ -115,7 +121,9 @@ export async function POST(request: NextRequest) {
       }
       if (product.quantity < itm.quantity) {
         return NextResponse.json(
-          { error: `Not enough stock for ${product.name}. Available: ${product.quantity}` },
+          {
+            error: `Not enough stock for ${product.name}. Available: ${product.quantity}`,
+          },
           { status: 400 }
         );
       }
@@ -123,24 +131,33 @@ export async function POST(request: NextRequest) {
       const price = itm.price ?? product.price;
       subtotal   += price * itm.quantity;
 
-      itemsToCreate.push({ productId: itm.productId, quantity: itm.quantity, price });
-      inventoryUpdates.push({ id: product.id, quantity: product.quantity - itm.quantity });
+      itemsToCreate.push({
+        productId: itm.productId,
+        quantity:  itm.quantity,
+        price,
+      });
+      inventoryUpdates.push({
+        id:       product.id,
+        quantity: product.quantity - itm.quantity,
+      });
       historyEntries.push({
         itemId:   product.id,
         action:   'REMOVE',
         quantity: itm.quantity,
         notes:    'Removed for order',
-        userId,           // ← now a *real* user
+        userId:   ADMIN_USER_ID,
       });
     }
 
-    // ─── compute totals & order number ────────────────────────────────────────
+    // Compute totals
     const discount = data.discount ?? 0;
     const total    = Math.max(0, subtotal - discount);
+
+    // Generate order number
     const count    = await db.order.count();
     const orderNum = `ORD-${String(count + 1).padStart(5, '0')}`;
 
-    // ─── transaction: create order + payment + items + inventory + history + status
+    // Transaction: create order + payment + items, update inventory, log history & status
     const newOrder = await db.$transaction(async (tx) => {
       const ord = await tx.order.create({
         data: {
@@ -152,7 +169,7 @@ export async function POST(request: NextRequest) {
           total,
           status:  'PENDING',
           notes:   data.notes ?? '',
-          createdBy: { connect: { id: userId } },      // ← real user
+          createdBy: { connect: { id: ADMIN_USER_ID } },
           payment: {
             create: {
               method: data.paymentMethod ?? 'CREDIT_CARD',
@@ -169,7 +186,7 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      // inventory + history
+      // Inventory updates & history entries
       for (const upd of inventoryUpdates) {
         await tx.inventoryItem.update({
           where: { id: upd.id },
@@ -180,29 +197,31 @@ export async function POST(request: NextRequest) {
         await tx.inventoryHistory.create({ data: h });
       }
 
-      // status log
+      // Status log
       await tx.orderStatusLog.create({
         data: {
           orderId: ord.id,
           status:  'PENDING',
           notes:   'Order created',
-          userId,                                // ← real user
+          userId:  ADMIN_USER_ID,
         },
       });
 
       return ord;
     });
 
-    // ─── post‐transaction low‐stock notifications ─────────────────────────────
+    // Post-transaction low-stock notifications
     for (const upd of inventoryUpdates) {
-      const item = await db.inventoryItem.findUnique({ where: { id: upd.id } });
+      const item = await db.inventoryItem.findUnique({
+        where: { id: upd.id },
+      });
       if (item && item.quantity <= item.reorderLevel) {
         await db.notification.create({
           data: {
             type:    'LOW_STOCK',
             title:   `Low Stock Alert: ${item.name}`,
             message: `${item.name} (${item.sku}) below reorder level.`,
-            userId,                            // ← real user
+            userId:  ADMIN_USER_ID,
             metadata: {
               itemId:       item.id,
               sku:          item.sku,
@@ -215,8 +234,8 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(newOrder);
-  } catch (error) {
-    console.error('POST /api/orders error:', error);
+  } catch (err) {
+    console.error('POST /api/orders error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
