@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
     const data = await request.json();
     console.log('  • payload:', data);
 
-    // Required fields
+    // Validate
     if (!data.customerId || !Array.isArray(data.items) || data.items.length === 0) {
       console.warn('  ⚠️ missing customerId/items');
       return NextResponse.json(
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
       }
 
       const product = await db.inventoryItem.findUnique({ where: { id: itm.productId } });
-      console.log('    – found product:', product?.id, 'qty:', product?.quantity);
+      console.log('    – product:', product?.id, 'qty:', product?.quantity);
       if (!product) {
         return NextResponse.json(
           { error: `Product ${itm.productId} not found` },
@@ -144,26 +144,26 @@ export async function POST(request: NextRequest) {
 
     console.log('  • subtotal:', subtotal);
 
-    // Totals & orderNumber
+    // Compute totals & orderNumber
     const discount = data.discount ?? 0;
     const total    = Math.max(0, subtotal - discount);
     const count    = await db.order.count();
     const orderNum = `ORD-${String(count + 1).padStart(5, '0')}`;
     console.log('  • orderNum:', orderNum, 'total:', total);
 
-    // Transaction
+    // Create in transaction
     const newOrder = await db.$transaction(async (tx) => {
       const ord = await tx.order.create({
         data: {
-          orderNumber: orderNum,
-          customerId:  data.customerId,
+          orderNumber:  orderNum,
+          customerId:   data.customerId,
           subtotal,
           discount,
           tax:     data.tax   ?? 0,
           total,
           status:  'PENDING',
           notes:   data.notes ?? '',
-          createdBy: { connect: { id: ADMIN_USER_ID } },
+          createdById: ADMIN_USER_ID,      // ← use createdById here
           payment: {
             create: {
               method: data.paymentMethod ?? 'CREDIT_CARD',
@@ -173,10 +173,15 @@ export async function POST(request: NextRequest) {
           },
           items: { create: itemsToCreate },
         },
-        include: { customer: true, items: { include: { product: true } }, payment: true },
+        include: {
+          customer: true,
+          items:    { include: { product: true } },
+          payment:  true,
+        },
       });
       console.log('    – created order.id =', ord.id);
 
+      // Inventory & history
       for (const upd of inventoryUpdates) {
         console.log('    – updating inventory:', upd);
         await tx.inventoryItem.update({ where: { id: upd.id }, data: { quantity: upd.quantity } });
@@ -214,7 +219,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log('  ✅ POST completed, returning newOrder.id =', newOrder.id);
+    console.log('  ✅ POST complete, returning newOrder.id =', newOrder.id);
     return NextResponse.json(newOrder);
   } catch (err: any) {
     console.error('  ❌ POST error:', err);
