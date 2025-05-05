@@ -1,227 +1,168 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
+// app/api/orders/route.ts
+export const runtime = 'nodejs';
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { db } from '@/lib/db';
 
-export async function GET(req: Request) {
+export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    const { searchParams } = new URL(req.url);
-    const status = searchParams.get('status');
+
+    const { searchParams } = request.nextUrl;
+    const status     = searchParams.get('status');
     const customerId = searchParams.get('customerId');
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-    const search = searchParams.get('search');
-    const limit = parseInt(searchParams.get('limit') || '100');
-    const offset = parseInt(searchParams.get('offset') || '0');
-    
-    // Build filters
-    const filters: any = {};
-    
-    if (status) {
-      filters.status = status;
-    }
-    
-    if (customerId) {
-      filters.customerId = customerId;
-    }
-    
+    const startDate  = searchParams.get('startDate');
+    const endDate    = searchParams.get('endDate');
+    const search     = searchParams.get('search');
+    const limit      = parseInt(searchParams.get('limit')  || '100', 10);
+    const offset     = parseInt(searchParams.get('offset') || '0',   10);
+
+    // Build Prisma filters
+    const where: any = {};
+    if (status)     where.status     = status;
+    if (customerId) where.customerId = customerId;
+
     if (startDate || endDate) {
-      filters.createdAt = {};
-      
-      if (startDate) {
-        filters.createdAt.gte = new Date(startDate);
-      }
-      
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
       if (endDate) {
-        // Add one day to include the end date
-        const endDateObj = new Date(endDate);
-        endDateObj.setDate(endDateObj.getDate() + 1);
-        filters.createdAt.lt = endDateObj;
+        const d = new Date(endDate);
+        d.setDate(d.getDate() + 1);
+        where.createdAt.lt = d;
       }
     }
-    
+
     if (search) {
-      filters.OR = [
+      where.OR = [
         { orderNumber: { contains: search, mode: 'insensitive' } },
-        { customer: { name: { contains: search, mode: 'insensitive' } } },
-        { customer: { email: { contains: search, mode: 'insensitive' } } },
+        { customer:    { name:        { contains: search, mode: 'insensitive' } } },
+        { customer:    { email:       { contains: search, mode: 'insensitive' } } },
       ];
     }
-    
-    // Get orders with total count
+
     const [orders, total] = await Promise.all([
       db.order.findMany({
-        where: filters,
+        where: where,
         orderBy: { createdAt: 'desc' },
         take: limit,
         skip: offset,
         include: {
           customer: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
+            select: { id: true, name: true, email: true },
           },
           items: {
             select: {
               id: true,
               quantity: true,
               price: true,
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  sku: true,
-                },
-              },
+              product: { select: { id: true, name: true, sku: true } },
             },
           },
         },
       }),
-      db.order.count({ where: filters }),
+      db.order.count({ where: where }),
     ]);
-    
-    return NextResponse.json({
-      orders,
-      total,
-      limit,
-      offset,
-    });
-  } catch (error) {
-    console.error('Error creating order:', error);
-    console.error('Error fetching orders:', error);
+
+    return NextResponse.json({ orders, total, limit, offset });
+  } catch (err) {
+    console.error('GET /api/orders error', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    // Only admins and staff can create orders
-    if (session.user.role !== 'ADMIN' && session.user.role !== 'STAFF') {
+
+    // Only ADMIN or STAFF
+    if (!['ADMIN', 'STAFF'].includes(session.user.role!)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
-    
-    const data = await req.json();
-    
-    // Validate required fields
-    if (!data.customerId || !data.items || !data.items.length) {
+
+    const data = await request.json();
+    if (!data.customerId || !Array.isArray(data.items) || data.items.length === 0) {
       return NextResponse.json(
         { error: 'Customer and at least one item are required' },
         { status: 400 }
       );
     }
-    
-    // Check if customer exists
-    const customer = await db.customer.findUnique({
-      where: { id: data.customerId },
-    });
-    
+
+    const customer = await db.customer.findUnique({ where: { id: data.customerId } });
     if (!customer) {
-      return NextResponse.json(
-        { error: 'Customer not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
-    
-    // Validate items and calculate totals
+
+    // Validate items, calculate subtotal, prepare inventory updates
     let subtotal = 0;
-    const itemsToCreate = [];
-    const inventoryUpdates = [];
-    const inventoryHistoryEntries = [];
-    
-    for (const item of data.items) {
-      if (!item.productId || !item.quantity || item.quantity <= 0) {
+    const itemsToCreate: any[] = [];
+    const inventoryUpdates: { id: string; quantity: number }[] = [];
+    const historyEntries: any[] = [];
+
+    for (const itm of data.items) {
+      if (!itm.productId || itm.quantity <= 0) {
         return NextResponse.json(
-          { error: 'Each item must have a product ID and positive quantity' },
+          { error: 'Each item must have a productId and positive quantity' },
           { status: 400 }
         );
       }
-      
-      // Get product to validate it exists and has enough stock
-      const product = await db.inventoryItem.findUnique({
-        where: { id: item.productId },
-      });
-      
+
+      const product = await db.inventoryItem.findUnique({ where: { id: itm.productId } });
       if (!product) {
         return NextResponse.json(
-          { error: `Product with ID ${item.productId} not found` },
+          { error: `Product ${itm.productId} not found` },
           { status: 404 }
         );
       }
-      
-      if (product.quantity < item.quantity) {
+      if (product.quantity < itm.quantity) {
         return NextResponse.json(
-          { error: `Not enough stock for ${product.name}. Available: ${product.quantity}` },
+          { error: `Not enough stock for ${product.name}. Have ${product.quantity}` },
           { status: 400 }
         );
       }
-      
-      // Use provided price or product price
-      const price = item.price || product.price;
-      
-      // Add to total
-      subtotal += price * item.quantity;
-      
-      // Prepare item for creation
-      itemsToCreate.push({
-        productId: item.productId,
-        quantity: item.quantity,
-        price: price,
-      });
-      
-      // Prepare inventory update
+
+      const price = itm.price ?? product.price;
+      subtotal += price * itm.quantity;
+
+      itemsToCreate.push({ productId: itm.productId, quantity: itm.quantity, price });
       inventoryUpdates.push({
         id: product.id,
-        quantity: product.quantity - item.quantity,
+        quantity: product.quantity - itm.quantity,
       });
-      
-      // Prepare inventory history entry
-      inventoryHistoryEntries.push({
-        itemId: product.id,
-        action: 'REMOVE',
-        quantity: item.quantity,
-        notes: 'Removed from inventory for order',
-        userId: session.user.id,
+      historyEntries.push({
+        itemId:    product.id,
+        action:    'REMOVE',
+        quantity:  itm.quantity,
+        notes:     'Removed for order',
+        userId:    session.user.id,
       });
     }
-    
-    // Apply discount if provided
+
     const discount = data.discount || 0;
-    const total = Math.max(0, subtotal - discount);
-    
-    // Generate order number
-    const orderCount = await db.order.count();
-    const orderNumber = `ORD-${String(orderCount + 1).padStart(5, '0')}`;
-    
-    // Create order in a transaction
-    const order = await db.$transaction(async (prisma) => {
-      // Create the order
-      const newOrder = await prisma.order.create({
+    const total    = Math.max(0, subtotal - discount);
+    const count    = await db.order.count();
+    const orderNum = `ORD-${String(count + 1).padStart(5, '0')}`;
+
+    // Transaction: create order, update inventory, history, status log
+    const newOrder = await db.$transaction(async (tx) => {
+      const ord = await tx.order.create({
         data: {
-          orderNumber,
-          customerId: data.customerId,
+          orderNumber: orderNum,
+          customerId:  data.customerId,
           subtotal,
           discount,
-          tax: data.tax || 0,
+          tax:     data.tax   || 0,
           total,
-          status: 'PENDING',
-          notes: data.notes || '',
-          createdBy: {
-            connect: { id: session.user.id }
-          },
+          status:  'PENDING',
+          notes:   data.notes || '',
+          createdBy: { connect: { id: session.user.id } },
           payment: {
             create: {
               method: data.paymentMethod || 'CREDIT_CARD',
@@ -229,76 +170,62 @@ export async function POST(req: Request) {
               amount: total,
             },
           },
-          items: {
-            create: itemsToCreate,
-          },
+          items: { create: itemsToCreate },
         },
         include: {
           customer: true,
-          items: {
-            include: {
-              product: true,
-            },
-          },
+          items: { include: { product: true } },
           payment: true,
         },
       });
-      
-      // Update inventory for each item
-      for (const update of inventoryUpdates) {
-        await prisma.inventoryItem.update({
-          where: { id: update.id },
-          data: { quantity: update.quantity },
+
+      for (const upd of inventoryUpdates) {
+        await tx.inventoryItem.update({
+          where: { id: upd.id },
+          data: { quantity: upd.quantity },
         });
       }
-      
-      // Record inventory history
-      for (const entry of inventoryHistoryEntries) {
-        await prisma.inventoryHistory.create({
-          data: entry,
-        });
+
+      for (const h of historyEntries) {
+        await tx.inventoryHistory.create({ data: h });
       }
-      
-      // Create order status entry
-      await prisma.orderStatusLog.create({
+
+      await tx.orderStatusLog.create({
         data: {
-          orderId: newOrder.id,
-          status: 'PENDING',
-          notes: 'Order created',
-          userId: session.user.id,
+          orderId: ord.id,
+          status:  'PENDING',
+          notes:   'Order created',
+          userId:  session.user.id,
         },
       });
-      
-      return newOrder;
+
+      return ord;
     });
-    
-    // Check for low stock after inventory updates
-    for (const update of inventoryUpdates) {
-      const item = await db.inventoryItem.findUnique({
-        where: { id: update.id },
-      });
-      
+
+    // Low stock notifications
+    for (const upd of inventoryUpdates) {
+      const item = await db.inventoryItem.findUnique({ where: { id: upd.id } });
       if (item && item.quantity <= item.reorderLevel) {
         await db.notification.create({
           data: {
-            type: 'LOW_STOCK',
-            title: `Low Stock Alert: ${item.name}`,
-            message: `The inventory for ${item.name} (${item.sku}) is below the reorder level.`,
-            userId: session.user.id,
+            type:    'LOW_STOCK',
+            title:   `Low Stock: ${item.name}`,
+            message: `${item.name} (${item.sku}) below reorder level`,
+            userId:  session.user.id,
             metadata: {
-              itemId: item.id,
-              sku: item.sku,
-              quantity: item.quantity,
+              itemId: upd.id,
+              sku:    item.sku,
+              qty:    item.quantity,
               reorderLevel: item.reorderLevel,
             },
           },
         });
       }
     }
-    
-    return NextResponse.json(order);
-  } catch (error) {
-    console.error('Error creating order:', error);
+
+    return NextResponse.json(newOrder);
+  } catch (err) {
+    console.error('POST /api/orders error', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
