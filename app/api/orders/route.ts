@@ -6,22 +6,22 @@ import { getServerSession }        from 'next-auth/next';
 import { authOptions }             from '@/app/api/auth/[...nextauth]/route';
 import { db }                      from '@/lib/db';
 
-console.log('▶️ /api/orders handler loaded');
-console.log('   NODE_ENV=',    process.env.NODE_ENV);
-console.log('   NEXTAUTH_URL=', process.env.NEXTAUTH_URL);
+console.log('▶️ /api/orders handler loaded', {
+  NODE_ENV:    process.env.NODE_ENV,
+  NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+});
 
 export async function GET(request: NextRequest) {
   console.log('🔍 GET /api/orders called:', request.nextUrl.href);
   try {
     const session = await getServerSession(authOptions);
     console.log('   session:', session);
-
     if (!session) {
       console.error('   ⛔ GET Unauthorized – no session');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const params = request.nextUrl.searchParams;
+    const params     = request.nextUrl.searchParams;
     const status     = params.get('status');
     const customerId = params.get('customerId');
     const startDate  = params.get('startDate');
@@ -90,20 +90,24 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     console.log('   session:', session);
-
     if (!session) {
       console.error('   ⛔ POST Unauthorized – no session');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    console.log('   user.role =', session.user.role);
+    console.log('   session.user.role =', session.user.role);
     if (!['ADMIN', 'STAFF'].includes(session.user.role!)) {
-      console.error('   ⛔ POST Forbidden – invalid role:', session.user.role);
+      console.error('   ⛔ POST Forbidden – role is not ADMIN/STAFF:', session.user.role);
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const data = await request.json();
-    console.log('   request.body:', data);
+    let data: any;
+    try {
+      data = await request.json();
+      console.log('   request.body:', data);
+    } catch (parseErr) {
+      console.error('   ⛔ POST Bad Request – JSON parse error:', parseErr);
+      return NextResponse.json({ error: 'Bad Request' }, { status: 400 });
+    }
 
     if (!data.customerId || !Array.isArray(data.items) || data.items.length === 0) {
       console.error('   ⛔ POST Bad Request – missing customerId or items');
@@ -113,14 +117,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify customer exists
+    // Validate customer
     const customer = await db.customer.findUnique({ where: { id: data.customerId } });
     if (!customer) {
       console.error('   ⛔ POST Customer not found:', data.customerId);
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
 
-    // Prepare for item validation
+    // Validate items & prepare transaction
     let subtotal = 0;
     const itemsToCreate: any[] = [];
     const inventoryUpdates: { id: string; quantity: number }[] = [];
@@ -150,7 +154,7 @@ export async function POST(request: NextRequest) {
       }
 
       const price = itm.price ?? product.price;
-      subtotal += price * itm.quantity;
+      subtotal  += price * itm.quantity;
 
       itemsToCreate.push({ productId: itm.productId, quantity: itm.quantity, price });
       inventoryUpdates.push({ id: product.id, quantity: product.quantity - itm.quantity });
@@ -158,7 +162,7 @@ export async function POST(request: NextRequest) {
         itemId:   product.id,
         action:   'REMOVE',
         quantity: itm.quantity,
-        notes:    'Removed for order creation',
+        notes:    'Removed for order',
         userId:   session.user.id,
       });
     }
@@ -168,9 +172,9 @@ export async function POST(request: NextRequest) {
     const count    = await db.order.count();
     const orderNum = `ORD-${String(count + 1).padStart(5, '0')}`;
 
-    console.log('   creating order with subtotal, discount, total:', { subtotal, discount, total, orderNum });
+    console.log('   creating order:', { subtotal, discount, total, orderNum });
 
-    // Transaction: create order + payment + items, update inventory + history + status log
+    // Transaction
     const newOrder = await db.$transaction(async (tx) => {
       const ord = await tx.order.create({
         data: {
@@ -198,20 +202,16 @@ export async function POST(request: NextRequest) {
           payment:  true,
         },
       });
+      console.log('   order record created:', ord.id);
 
-      console.log('   order created:', ord.id);
-
-      // Inventory updates + history
       for (const upd of inventoryUpdates) {
         console.log('   updating inventory:', upd);
         await tx.inventoryItem.update({ where: { id: upd.id }, data: { quantity: upd.quantity } });
       }
       for (const h of historyEntries) {
-        console.log('   recording history entry:', h);
+        console.log('   logging inventory history:', h);
         await tx.inventoryHistory.create({ data: h });
       }
-
-      // Status log
       await tx.orderStatusLog.create({
         data: {
           orderId: ord.id,
@@ -220,22 +220,21 @@ export async function POST(request: NextRequest) {
           userId:  session.user.id,
         },
       });
-
       return ord;
     });
 
-    console.log('   transaction complete, newOrder.id=', newOrder.id);
+    console.log('   transaction complete, newOrder.id =', newOrder.id);
 
-    // Post-transaction: low stock notifications
+    // Low-stock notifications
     for (const upd of inventoryUpdates) {
       const item = await db.inventoryItem.findUnique({ where: { id: upd.id } });
       if (item && item.quantity <= item.reorderLevel) {
-        console.log('   low stock detected for:', item.id);
+        console.log('   low stock alert for:', item.id);
         await db.notification.create({
           data: {
             type:    'LOW_STOCK',
             title:   `Low Stock Alert: ${item.name}`,
-            message: `${item.name} (${item.sku}) is below reorder level.`,
+            message: `${item.name} (${item.sku}) below reorder level.`,
             userId:  session.user.id,
             metadata: {
               itemId:       item.id,
@@ -248,7 +247,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log('   ✅ POST created order successfully:', newOrder.id);
+    console.log('   ✅ POST completed successfully:', newOrder.id);
     return NextResponse.json(newOrder);
   } catch (err) {
     console.error('   ❌ POST /api/orders error:', err);
