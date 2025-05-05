@@ -12,6 +12,9 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'EquilibriumSys - Inventory Management',
   description: 'Intelligent inventory management for small businesses',
+  icons: {
+    icon: '/favicon.png',
+  },
 };
 
 export default function RootLayout({
@@ -21,6 +24,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head />
       <body className={inter.className}>
         <ThemeProvider
           attribute="class"
