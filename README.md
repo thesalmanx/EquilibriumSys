@@ -1,4 +1,4 @@
-# 📊 EquilibriumSys – Inventory Management System for Small Businesses
+# 📊 EquilibriumSys – Inventory Management System for Small Businesses.
 
 ## Project is live at [equilibriumsys.salmann.dev](https://equilibriumsys.salmann.dev)
 
