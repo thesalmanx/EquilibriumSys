@@ -20,6 +20,7 @@ async function main() {
   });
 
   await prisma.user.upsert({
+    
     where: { email: 'staff@example.com' },
     update: {},
     create: {
@@ -30,7 +31,7 @@ async function main() {
     },
   });
 
-  console.log('✅ Seed complete. Users created.');
+  console.log('Seed complete. Users created.');
 }
 
 main()
