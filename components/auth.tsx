@@ -6,7 +6,7 @@ import { signIn } from 'next-auth/react';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -140,12 +140,21 @@ export function Auth() {
                 Sign In
               </Button>
             </CardFooter>
+            <CardFooter>
+              <Link className="w-full gap-2" href="/signup">
+              <Button className="w-full gap-2" disabled={isLoading}>
+              <LayoutDashboard className="h-4 w-4" />
+
+                Sign up
+              </Button>
+              </Link>
+            </CardFooter>
           </form>
         </Form>
       </Card>
 
       <div className="mt-4 text-center text-sm text-muted-foreground">
-        <p>Demo account: <strong>admin@example.com</strong> / <strong>password123</strong></p>
+        {/* <p>Demo account: <strong>admin@example.com</strong> / <strong>password123</strong></p> */}
       </div>
     </div>
   );

@@ -1,6 +1,3 @@
-// app/api/auth/[...nextauth]/route.ts
-export const runtime = 'nodejs';
-
 import NextAuth from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 
@@ -17,16 +14,18 @@ const handler = NextAuth({
     CredentialsProvider({
       name: 'Credentials',
       credentials: {
-        email:    { label: 'Email',    type: 'email'    },
+        email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        // NO checks: accept anyone as ADMIN
+        // In production, you'd validate user here.
+        if (!credentials?.email) return null;
+
         return {
-          id:    credentials?.email || 'anonymous',
-          email: credentials?.email,
-          name:  credentials?.email,
-          role:  'ADMIN',
+          id: credentials.email,
+          email: credentials.email,
+          name: credentials.email.split('@')[0],
+          role: 'ADMIN', // 👈 Ensure this is set!
         };
       },
     }),
@@ -34,19 +33,19 @@ const handler = NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id   = user.id;
+        token.id = user.id;
         token.email = user.email;
-        token.name  = user.name;
-        token.role  = user.role;
+        token.name = user.name;
+        token.role = user.role; // 👈 Include role in token
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user && token) {
-        session.user.id    = token.id;
+        session.user.id = token.id;
         session.user.email = token.email;
-        session.user.name  = token.name;
-        session.user.role  = token.role;
+        session.user.name = token.name;
+        session.user.role = token.role; // 👈 Include role in session
       }
       return session;
     },
