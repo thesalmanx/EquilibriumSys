@@ -31,36 +31,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const loadSession = () => {
-      const storedSession = localStorage.getItem('mockSession');
-      if (storedSession) {
-        try {
-          const parsed = JSON.parse(storedSession);
-          setUser(parsed.user);
-        } catch (e) {
-          console.error('Failed to parse mockSession', e);
+    const fetchUser = async () => {
+      try {
+        setLoading(true);
+
+        // 🔁 Replace with real API call to get current user
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const userData = await res.json();
+          setUser(userData);
+        } else {
+          setUser(null);
+          if (pathname !== '/' && pathname !== '/login') {
+            router.push('/login');
+          }
         }
-      } else if (pathname === '/') {
-        const mockUser = {
-          id: '1',
-          name: 'Admin User',
-          email: 'admin@example.com',
-          role: 'ADMIN',
-        };
-        localStorage.setItem('mockSession', JSON.stringify({ user: mockUser }));
-        setUser(mockUser);
-        router.push('/dashboard');
+      } catch (error) {
+        console.error('Failed to fetch user:', error);
+        setUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
-    loadSession();
+    fetchUser();
   }, [pathname, router]);
 
   const logout = () => {
-    localStorage.removeItem('mockSession');
-    setUser(null);
-    router.push('/');
+    // 🔁 Replace with real logout API
+    fetch('/api/auth/logout', { method: 'POST' })
+      .then(() => {
+        setUser(null);
+        router.push('/login');
+      })
+      .catch(err => {
+        console.error('Logout failed:', err);
+      });
   };
 
   return (
