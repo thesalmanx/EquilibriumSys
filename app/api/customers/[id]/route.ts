@@ -5,15 +5,33 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
   try {
     const customer = await db.customer.findUnique({
       where: { id: params.id },
+      include: {
+        address: true,
+        orders: true,
+      },
     });
 
     if (!customer) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
 
-    // Optionally delete related address if your DB is set up with foreign keys or nested delete
-    await db.customer.delete({
-      where: { id: params.id },
+    await db.$transaction(async (tx) => {
+      // Optional: delete related orders if your schema supports cascade delete
+      await tx.order.deleteMany({
+        where: { customerId: customer.id },
+      });
+
+      // Optional: delete address if exists
+      if (customer.address) {
+        await tx.address.delete({
+          where: { id: customer.address.id },
+        });
+      }
+
+      // Finally, delete the customer
+      await tx.customer.delete({
+        where: { id: customer.id },
+      });
     });
 
     return NextResponse.json({ success: true });
