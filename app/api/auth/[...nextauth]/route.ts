@@ -1,5 +1,7 @@
 import NextAuth from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
+import { db } from '@/lib/db';
+import bcrypt from 'bcryptjs';
 
 const handler = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
@@ -18,14 +20,22 @@ const handler = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        // In production, you'd validate user here.
-        if (!credentials?.email) return null;
+        if (!credentials?.email || !credentials?.password) return null;
+
+        const user = await db.user.findUnique({
+          where: { email: credentials.email },
+        });
+
+        if (!user) return null;
+
+        const isValid = await bcrypt.compare(credentials.password, user.password);
+        if (!isValid) return null;
 
         return {
-          id: credentials.email,
-          email: credentials.email,
-          name: credentials.email.split('@')[0],
-          role: 'ADMIN', // 👈 Ensure this is set!
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
         };
       },
     }),
@@ -36,7 +46,7 @@ const handler = NextAuth({
         token.id = user.id;
         token.email = user.email;
         token.name = user.name;
-        token.role = user.role; // 👈 Include role in token
+        token.role = user.role;
       }
       return token;
     },
@@ -45,7 +55,7 @@ const handler = NextAuth({
         session.user.id = token.id;
         session.user.email = token.email;
         session.user.name = token.name;
-        session.user.role = token.role; // 👈 Include role in session
+        session.user.role = token.role;
       }
       return session;
     },
