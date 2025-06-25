@@ -1,20 +1,14 @@
 'use client';
 
-import {
-  useState,
-  useEffect,
-  createContext,
-  useContext,
-  ReactNode,
-} from 'react';
+import { useState, useEffect, useContext, createContext, ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
-interface User {
+type User = {
   id: string;
   name?: string | null;
   email?: string | null;
   role?: string | null;
-}
+};
 
 interface AuthContextType {
   user: User | null;
@@ -30,7 +24,6 @@ const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
-// Provider component
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,43 +31,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const checkSession = () => {
+    const loadSession = () => {
       const storedSession = localStorage.getItem('mockSession');
-
       if (storedSession) {
         try {
-          const session = JSON.parse(storedSession);
-          setUser(session.user);
-        } catch (error) {
-          console.error('Failed to parse mock session:', error);
-          localStorage.removeItem('mockSession');
-          setUser(null);
+          const parsed = JSON.parse(storedSession);
+          setUser(parsed.user);
+        } catch (e) {
+          console.error('Failed to parse mockSession', e);
         }
-      } else {
-        // If visiting the root (login page), initialize mock user
-        if (pathname === '/') {
-          const mockUser = {
-            id: '1',
-            name: 'Salman Sheikh', // 🔁 Change name here if needed
-            email: 'salman@example.com',
-            role: 'ADMIN',
-          };
-
-          localStorage.setItem(
-            'mockSession',
-            JSON.stringify({ user: mockUser })
-          );
-          setUser(mockUser);
-          router.push('/dashboard');
-        } else {
-          setUser(null);
-        }
+      } else if (pathname === '/') {
+        const mockUser = {
+          id: '1',
+          name: 'Admin User',
+          email: 'admin@example.com',
+          role: 'ADMIN',
+        };
+        localStorage.setItem('mockSession', JSON.stringify({ user: mockUser }));
+        setUser(mockUser);
+        router.push('/dashboard');
       }
-
       setLoading(false);
     };
 
-    checkSession();
+    loadSession();
   }, [pathname, router]);
 
   const logout = () => {
