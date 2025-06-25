@@ -39,36 +39,45 @@ export function Auth() {
   });
 
 
-  const onSubmit = async (values: z.infer<typeof loginSchema>) => {
-    setIsLoading(true);
+const onSubmit = async (values: z.infer<typeof loginSchema>) => {
+  setIsLoading(true);
 
-    try {
-      const result = await signIn('credentials', {
-        email: values.email,
-        password: values.password,
-        redirect: false,
-        callbackUrl: '/dashboard',
-      });
+  try {
+    const result = await signIn('credentials', {
+      email: values.email,
+      password: values.password,
+      redirect: false,
+      callbackUrl: '/dashboard',
+    });
 
-      if (result?.error) {
-        toast({
-          variant: 'destructive',
-          title: 'Login failed',
-          description: 'Invalid email or password. Please try again.',
-        });
-      } else {
-        router.push('/dashboard');
-      }
-    } catch (error) {
+    if (result?.error) {
       toast({
         variant: 'destructive',
-        title: 'Login error',
-        description: 'An unexpected error occurred. Please try again.',
+        title: 'Login failed',
+        description: 'Invalid email or password. Please try again.',
       });
-    } finally {
-      setIsLoading(false);
+    } else {
+      // Fetch session info manually
+      const res = await fetch('/api/auth/session');
+      const session = await res.json();
+
+      if (session?.user) {
+        localStorage.setItem('user', JSON.stringify(session.user));
+      }
+
+      router.push('/dashboard');
     }
-  };
+  } catch (error) {
+    toast({
+      variant: 'destructive',
+      title: 'Login error',
+      description: 'An unexpected error occurred. Please try again.',
+    });
+  } finally {
+    setIsLoading(false);
+  }
+};
+
 
   return (
     <div className="w-full max-w-md px-4">

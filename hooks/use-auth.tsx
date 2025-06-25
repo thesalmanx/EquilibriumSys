@@ -1,7 +1,13 @@
 'use client';
 
-import { useState, useEffect, useContext, createContext, ReactNode } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from 'react';
+import { useRouter } from 'next/navigation';
 
 type User = {
   id: string;
@@ -28,36 +34,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const pathname = usePathname();
 
   useEffect(() => {
-    const storedSession = localStorage.getItem('userSession');
-
-    try {
-      if (storedSession) {
-        const parsed = JSON.parse(storedSession);
+    const stored = localStorage.getItem('user');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
         setUser(parsed);
-      } else if (!['/', '/signup'].includes(pathname)) {
-        // Delay the redirect until loading is false
-        setUser(null);
+      } catch (err) {
+        console.error('Failed to parse user from localStorage:', err);
+        localStorage.removeItem('user');
       }
-    } catch (err) {
-      console.error('Error parsing userSession:', err);
-      setUser(null);
-    } finally {
-      setLoading(false);
     }
-  }, [pathname]);
-
-  // Redirect only AFTER loading is false AND user is not logged in
-  useEffect(() => {
-    if (!loading && !user && !['/', '/signup'].includes(pathname)) {
-      router.push('/');
-    }
-  }, [loading, user, pathname, router]);
+    setLoading(false);
+  }, []);
 
   const logout = () => {
-    localStorage.removeItem('userSession');
+    localStorage.removeItem('user');
     setUser(null);
     router.push('/');
   };
