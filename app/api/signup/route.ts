@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
         name,
         email,
         password: hashedPassword,
-        role: 'STAFF',
+        role: 'ADMIN',
       },
       select: {
         id: true,
