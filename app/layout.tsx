@@ -7,6 +7,7 @@ import { MainNav } from '@/components/main-nav';
 import { AuthProvider } from '@/lib/auth-provider';
 import { SidebarProvider } from '@/components/sidebar-provider';
 
+
 const inter = Inter({ subsets: ['latin'] });
 
 
