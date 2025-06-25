@@ -32,22 +32,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const storedSession = localStorage.getItem('userSession');
-    if (storedSession) {
-      try {
+
+    try {
+      if (storedSession) {
         const parsed = JSON.parse(storedSession);
         setUser(parsed);
-      } catch (err) {
-        console.error('Failed to parse stored user session');
+      } else if (!['/', '/signup'].includes(pathname)) {
+        // Delay the redirect until loading is false
         setUser(null);
       }
-    } else {
-      // redirect to login only if not already on login or signup
-      if (!['/', '/signup'].includes(pathname)) {
-        router.push('/');
-      }
+    } catch (err) {
+      console.error('Error parsing userSession:', err);
+      setUser(null);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [pathname, router]);
+  }, [pathname]);
+
+  // Redirect only AFTER loading is false AND user is not logged in
+  useEffect(() => {
+    if (!loading && !user && !['/', '/signup'].includes(pathname)) {
+      router.push('/');
+    }
+  }, [loading, user, pathname, router]);
 
   const logout = () => {
     localStorage.removeItem('userSession');
