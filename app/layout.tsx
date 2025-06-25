@@ -9,6 +9,7 @@ import { SidebarProvider } from '@/components/sidebar-provider';
 
 const inter = Inter({ subsets: ['latin'] });
 
+
 export const metadata: Metadata = {
   title: 'EquilibriumSys - Inventory Management',
   description: 'Intelligent inventory management for small businesses',
