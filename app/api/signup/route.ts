@@ -6,6 +6,7 @@ export async function POST(request: NextRequest) {
   try {
     const { name, email, password } = await request.json();
 
+    // basic validation
     if (
       typeof name !== 'string' ||
       typeof email !== 'string' ||
@@ -13,15 +14,26 @@ export async function POST(request: NextRequest) {
       name.length < 2 ||
       password.length < 6
     ) {
-      return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Invalid name, email, or password.' },
+        { status: 400 }
+      );
     }
 
+    // check for existing user
     const existing = await db.user.findUnique({ where: { email } });
     if (existing) {
-      return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'Email already in use.' },
+        { status: 409 }
+      );
     }
 
-    const hashedPassword = await hash(password, 10);
+    // hash the password
+    const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10', 10);
+    const hashedPassword = await hash(password, saltRounds);
+
+    // create the new user (default role STAFF—adjust if you have a CUSTOMER/USER enum)
     const user = await db.user.create({
       data: {
         name,
@@ -37,9 +49,12 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(user, { status: 201 });
+    return NextResponse.json({ user }, { status: 201 });
   } catch (err) {
-    console.error('Signup error:', err);
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+    console.error('🚨 POST /api/signup error:', err);
+    return NextResponse.json(
+      { error: 'Internal server error.' },
+      { status: 500 }
+    );
   }
 }
