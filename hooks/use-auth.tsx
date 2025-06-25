@@ -27,46 +27,32 @@ export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const pathname = usePathname();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    const fetchUser = async () => {
+    const storedSession = localStorage.getItem('userSession');
+    if (storedSession) {
       try {
-        setLoading(true);
-
-        // 🔁 Replace with real API call to get current user
-        const res = await fetch('/api/auth/me');
-        if (res.ok) {
-          const userData = await res.json();
-          setUser(userData);
-        } else {
-          setUser(null);
-          if (pathname !== '/' && pathname !== '/login') {
-            router.push('/login');
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch user:', error);
+        const parsed = JSON.parse(storedSession);
+        setUser(parsed);
+      } catch (err) {
+        console.error('Failed to parse stored user session');
         setUser(null);
-      } finally {
-        setLoading(false);
       }
-    };
-
-    fetchUser();
+    } else {
+      // redirect to login only if not already on login or signup
+      if (!['/', '/signup'].includes(pathname)) {
+        router.push('/');
+      }
+    }
+    setLoading(false);
   }, [pathname, router]);
 
   const logout = () => {
-    // 🔁 Replace with real logout API
-    fetch('/api/auth/logout', { method: 'POST' })
-      .then(() => {
-        setUser(null);
-        router.push('/login');
-      })
-      .catch(err => {
-        console.error('Logout failed:', err);
-      });
+    localStorage.removeItem('userSession');
+    setUser(null);
+    router.push('/');
   };
 
   return (
