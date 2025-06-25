@@ -131,46 +131,35 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    
-    // Only admins can delete inventory items
-    if (session.user.role !== 'ADMIN') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    
     // Check if item exists
     const item = await db.inventoryItem.findUnique({
       where: { id: params.id },
     });
-    
+
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 });
     }
-    
+
     // Delete inventory history related to this item
     await db.inventoryHistory.deleteMany({
       where: { itemId: params.id },
     });
-    
+
     // Delete notifications related to this item
     await db.notification.deleteMany({
       where: {
         metadata: {
           path: ['itemId'],
-          equals: params.id
-        }
+          equals: params.id,
+        },
       },
     });
-    
-    // Delete the item
+
+    // Delete the item itself
     await db.inventoryItem.delete({
       where: { id: params.id },
     });
-    
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting inventory item:', error);
