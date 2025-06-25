@@ -1,73 +1,91 @@
 'use client';
 
-import { useState, useEffect, createContext, useContext } from 'react';
-import { Session } from 'next-auth';
+import {
+  useState,
+  useEffect,
+  createContext,
+  useContext,
+  ReactNode,
+} from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
-interface AuthContextType {
-  user: {
-    id: string;
-    name?: string | null;
-    email?: string | null;
-    role?: string | null;
-  } | null;
-  loading: boolean;
+interface User {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
 }
 
-export const AuthContext = createContext<AuthContextType>({
+interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+  logout: () => void;
+}
+
+const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
+  logout: () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
 
-// This is a mock of session handling until we have the real backend
-export function useMockAuth() {
-  const [user, setUser] = useState<AuthContextType['user']>(null);
+// Provider component
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
-    // Simulate fetching session
     const checkSession = () => {
-      // Check if we have stored mock session data
       const storedSession = localStorage.getItem('mockSession');
-      
+
       if (storedSession) {
         try {
           const session = JSON.parse(storedSession);
           setUser(session.user);
         } catch (error) {
-          console.error('Error parsing stored session:', error);
+          console.error('Failed to parse mock session:', error);
+          localStorage.removeItem('mockSession');
           setUser(null);
         }
       } else {
-        // If on the login page, use demo account
+        // If visiting the root (login page), initialize mock user
         if (pathname === '/') {
           const mockUser = {
             id: '1',
-            name: 'Admin User',
-            email: 'admin@example.com',
+            name: 'Salman Sheikh', // 🔁 Change name here if needed
+            email: 'salman@example.com',
             role: 'ADMIN',
           };
-          
-          // Store mock session for future use
-          localStorage.setItem('mockSession', JSON.stringify({ user: mockUser }));
+
+          localStorage.setItem(
+            'mockSession',
+            JSON.stringify({ user: mockUser })
+          );
           setUser(mockUser);
-          
-          // Redirect to dashboard
           router.push('/dashboard');
         } else {
           setUser(null);
         }
       }
-      
+
       setLoading(false);
     };
-    
+
     checkSession();
   }, [pathname, router]);
 
-  return { user, loading };
+  const logout = () => {
+    localStorage.removeItem('mockSession');
+    setUser(null);
+    router.push('/');
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, loading, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
