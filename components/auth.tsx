@@ -63,6 +63,7 @@ const onSubmit = async (values: z.infer<typeof loginSchema>) => {
 
       if (session?.user) {
         localStorage.setItem('user', JSON.stringify(session.user));
+        window.location.href = '/dashboard';
       }
 
       router.push('/dashboard');
