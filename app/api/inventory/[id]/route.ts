@@ -131,7 +131,16 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
-    // Check if item exists
+    const session = await getServerSession(authOptions);
+
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (session.user.role !== 'ADMIN' && session.user.role !== 'STAFF') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const item = await db.inventoryItem.findUnique({
       where: { id: params.id },
     });
@@ -140,24 +149,37 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
       return NextResponse.json({ error: 'Item not found' }, { status: 404 });
     }
 
-    // Delete inventory history related to this item
-    await db.inventoryHistory.deleteMany({
-      where: { itemId: params.id },
-    });
-
-    // Delete notifications related to this item
-    await db.notification.deleteMany({
-      where: {
-        metadata: {
-          path: ['itemId'],
-          equals: params.id,
+    await db.$transaction(async (tx) => {
+      // Log deletion in inventory history
+      await tx.inventoryHistory.create({
+        data: {
+          itemId: item.id,
+          action: 'REMOVE',
+          quantity: item.quantity,
+          notes: `Item deleted by ${session.user.name || session.user.email}`,
+          userId: session.user.id,
         },
-      },
-    });
+      });
 
-    // Delete the item itself
-    await db.inventoryItem.delete({
-      where: { id: params.id },
+      // Delete related notifications
+      await tx.notification.deleteMany({
+        where: {
+          metadata: {
+            path: ['itemId'],
+            equals: params.id,
+          },
+        },
+      });
+
+      // Delete history entries
+      await tx.inventoryHistory.deleteMany({
+        where: { itemId: params.id },
+      });
+
+      // Finally, delete the item
+      await tx.inventoryItem.delete({
+        where: { id: params.id },
+      });
     });
 
     return NextResponse.json({ success: true });
