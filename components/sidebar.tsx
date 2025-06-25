@@ -79,11 +79,11 @@ export function Sidebar() {
       icon: <BarChart className="h-5 w-5" />,
       title: "Reports",
     },
-    {
-      href: "/settings",
-      icon: <Settings className="h-5 w-5" />,
-      title: "Settings",
-    },
+    // {
+    //   href: "/settings",
+    //   icon: <Settings className="h-5 w-5" />,
+    //   title: "Settings",
+    // },
   ];
 
   return (
