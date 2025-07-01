@@ -43,9 +43,7 @@ export async function PUT(req: Request, { params }: Params) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (session.user.role !== 'ADMIN' && session.user.role !== 'STAFF') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    // ❌ Removed role-based access check
 
     const data = await req.json();
 
@@ -107,24 +105,22 @@ export async function PUT(req: Request, { params }: Params) {
 
       const reorderLevel = data.reorderLevel ?? currentItem.reorderLevel;
       if (newQuantity <= reorderLevel && previousQuantity > reorderLevel) {
-await db.notification.create({
-  data: {
-    type: 'LOW_STOCK',
-    title: `Low Stock Alert: ${item.name}`,
-    message: `The inventory for ${item.name} (${item.sku}) is below the reorder level.`,
-    userId: session.user.id,
-    read: false,
-    readAt: null,
-    metadata: {
-      itemId: item.id,
-      sku: item.sku,
-      quantity: newQuantity,
-      reorderLevel,
-    },
-  },
-});
-
-
+        await db.notification.create({
+          data: {
+            type: 'LOW_STOCK',
+            title: `Low Stock Alert: ${item.name}`,
+            message: `The inventory for ${item.name} (${item.sku}) is below the reorder level.`,
+            userId: session.user.id,
+            read: false,
+            readAt: null,
+            metadata: {
+              itemId: item.id,
+              sku: item.sku,
+              quantity: newQuantity,
+              reorderLevel,
+            },
+          },
+        });
       }
     }
 
@@ -134,6 +130,7 @@ await db.notification.create({
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
+
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
