@@ -67,15 +67,18 @@ export async function POST(req: Request) {
     }
     
     // Create notification
-    const notification = await db.notification.create({
-      data: {
-        userId: data.userId,
-        type: data.type,
-        title: data.title,
-        message: data.message,
-        metadata: data.metadata || {},
-      },
-    });
+const notification = await db.notification.create({
+  data: {
+    userId: data.userId,
+    type: data.type,
+    title: data.title,
+    message: data.message,
+    metadata: data.metadata || {},
+    read: false,
+    readAt: null,
+  },
+});
+
     
     return NextResponse.json(notification);
   } catch (error) {
