@@ -91,10 +91,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
   };
 
-  const handlePrintReceipt = () => {
-    // Open print dialog
+const handlePrintReceipt = () => {
+  setTimeout(() => {
     window.print();
-  };
+  }, 100); // Slight delay to ensure content is visible
+};
 
   if (loading) {
     return (
@@ -126,7 +127,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   };
 
   return (
-    <div className="space-y-6">
+    <div id="print-area" className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <Button 
           variant="ghost" 
@@ -138,14 +139,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         </Button>
         
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={handlePrintReceipt}
-            className="gap-2"
-          >
-            <Printer size={16} />
-            Print Receipt
-          </Button>
+<Button
+  variant="outline"
+  onClick={handlePrintReceipt}
+  className="gap-2 no-print" // 👈 ADD CLASS
+>
+  <Printer size={16} />
+  Print Receipt
+</Button>
+
           
           <Button
             variant="outline"
