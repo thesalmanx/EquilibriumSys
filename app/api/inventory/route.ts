@@ -6,52 +6,46 @@ import { db } from '@/lib/db';
 export async function GET(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    
+
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
+
     const { searchParams } = new URL(req.url);
     const category = searchParams.get('category');
     const search = searchParams.get('search');
     const lowStock = searchParams.get('lowStock') === 'true';
     const limit = parseInt(searchParams.get('limit') || '100');
     const offset = parseInt(searchParams.get('offset') || '0');
-    
-    // Build filters
-    const filters: any = {};
-    
+
+    let items = await db.inventoryItem.findMany({
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // Apply filters in-memory
     if (category) {
-      filters.category = category;
+      items = items.filter((item) => item.category === category);
     }
-    
+
     if (search) {
-      filters.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { sku: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-      ];
+      const lower = search.toLowerCase();
+      items = items.filter(
+        (item) =>
+          item.name.toLowerCase().includes(lower) ||
+          item.sku.toLowerCase().includes(lower) ||
+          item.description?.toLowerCase().includes(lower)
+      );
     }
-    
+
     if (lowStock) {
-      filters.quantity = {
-        lte: db.raw('reorderLevel')
-      };
+      items = items.filter((item) => item.quantity <= item.reorderLevel);
     }
-    
-    // Get inventory items with total count
-    const [items, total] = await Promise.all([
-      db.inventoryItem.findMany({
-        where: filters,
-        orderBy: { updatedAt: 'desc' },
-        take: limit,
-        skip: offset,
-      }),
-      db.inventoryItem.count({ where: filters }),
-    ]);
-    
+
+    const total = items.length;
+    const paginated = items.slice(offset, offset + limit);
+
     return NextResponse.json({
-      items,
+      items: paginated,
       total,
       limit,
       offset,
@@ -61,6 +55,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
+
 
 export async function POST(req: Request) {
   try {
