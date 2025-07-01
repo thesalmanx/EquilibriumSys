@@ -20,8 +20,17 @@ interface NotificationsMenuProps {
   children: React.ReactNode;
 }
 
+interface InventoryItem {
+  id: string;
+  name: string;
+  sku: string;
+  quantity: number;
+  reorderLevel: number;
+}
+
 export function NotificationsMenu({ children }: NotificationsMenuProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [lowStockItems, setLowStockItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
 
@@ -30,8 +39,11 @@ export function NotificationsMenu({ children }: NotificationsMenuProps) {
       setLoading(true);
       const data = await notificationService.getUnread();
       setNotifications(data.notifications);
+
+      const lowStock = await fetch('/api/inventory/low-stock').then((res) => res.json());
+      setLowStockItems(lowStock.items || []);
     } catch (error) {
-      console.error('Error fetching notifications:', error);
+      console.error('Error fetching notifications or low stock:', error);
     } finally {
       setLoading(false);
     }
@@ -72,6 +84,18 @@ export function NotificationsMenu({ children }: NotificationsMenuProps) {
     }
   };
 
+  const allItems = [
+    ...lowStockItems.map((item) => ({
+      id: `low-${item.id}`,
+      type: 'LOW_STOCK',
+      title: `Low Stock: ${item.name}`,
+      message: `Only ${item.quantity} left (Reorder at ${item.reorderLevel})`,
+      createdAt: new Date().toISOString(),
+      temp: true,
+    })),
+    ...notifications,
+  ];
+
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
@@ -105,13 +129,13 @@ export function NotificationsMenu({ children }: NotificationsMenuProps) {
                 </DropdownMenuItem>
               ))}
             </>
-          ) : notifications.length === 0 ? (
+          ) : allItems.length === 0 ? (
             <div className="py-6 text-center text-sm text-muted-foreground">
               No new notifications
             </div>
           ) : (
             <>
-              {notifications.map((notification) => (
+              {allItems.map((notification: any) => (
                 <DropdownMenuItem
                   key={notification.id}
                   className="flex items-start gap-3 py-3"
@@ -119,25 +143,25 @@ export function NotificationsMenu({ children }: NotificationsMenuProps) {
                   {getNotificationIcon(notification.type)}
                   <div className="flex-1">
                     <p className="text-sm font-medium">{notification.title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {notification.message}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{notification.message}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {new Date(notification.createdAt).toLocaleString()}
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 shrink-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleMarkRead(notification.id);
-                    }}
-                  >
-                    <Check className="h-3 w-3" />
-                    <span className="sr-only">Mark as read</span>
-                  </Button>
+                  {!notification.temp && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMarkRead(notification.id);
+                      }}
+                    >
+                      <Check className="h-3 w-3" />
+                      <span className="sr-only">Mark as read</span>
+                    </Button>
+                  )}
                 </DropdownMenuItem>
               ))}
             </>
