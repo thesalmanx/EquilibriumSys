@@ -56,22 +56,11 @@ export function UserNav() {
             </p>
           </div>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => router.push('/profile')}>
-            {/* <User className="mr-2 h-4 w-4" /> */}
-            {/* <span>Profile</span> */}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => router.push('/settings')}>
-            {/* <Settings className="mr-2 h-4 w-4" /> */}
-            {/* <span>Settings</span> */}
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleSignOut}>
+        
+        {/* <DropdownMenuItem onClick={handleSignOut}>
           <LogOut className="mr-2 h-4 w-4" />
           <span>Log out</span>
-        </DropdownMenuItem>
+        </DropdownMenuItem> */}
       </DropdownMenuContent>
     </DropdownMenu>
   );
