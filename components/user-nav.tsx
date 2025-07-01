@@ -60,11 +60,11 @@ export function UserNav() {
         <DropdownMenuGroup>
           <DropdownMenuItem onClick={() => router.push('/profile')}>
             <User className="mr-2 h-4 w-4" />
-            <span>Profile</span>
+            {/* <span>Profile</span> */}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => router.push('/settings')}>
             <Settings className="mr-2 h-4 w-4" />
-            <span>Settings</span>
+            {/* <span>Settings</span> */}
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
