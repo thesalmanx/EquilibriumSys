@@ -193,8 +193,8 @@ export function CustomersList() {
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem>Edit Customer</DropdownMenuItem>
-                      <DropdownMenuItem>View Orders</DropdownMenuItem>
+                      {/* <DropdownMenuItem>Edit Customer</DropdownMenuItem> */}
+                      {/* <DropdownMenuItem>View Orders</DropdownMenuItem> */}
                       <DropdownMenuItem
                         className="text-destructive focus:bg-destructive focus:text-destructive-foreground"
                         onClick={() => {
