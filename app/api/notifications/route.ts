@@ -79,6 +79,7 @@ const notification = await db.notification.create({
   },
 });
 
+
     
     return NextResponse.json(notification);
   } catch (error) {

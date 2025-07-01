@@ -2,6 +2,7 @@ export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { randomUUID } from 'crypto';
 
 async function getAdminUserId() {
   const admin = await db.user.findFirst({ where: { role: 'ADMIN' } });
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
     const tax = data.tax ?? 0;
     const total = subtotal - discount + tax;
     const count = await db.order.count();
-    const orderNumber = `ORD-${String(count + 1).padStart(5, '0')}`;
+const orderNumber = `ORD-${randomUUID().slice(0, 8).toUpperCase()}`;
 
     const order = await db.$transaction(
       async (tx) => {
